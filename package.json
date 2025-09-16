@@ -1,0 +1,22 @@
+{
+  "name": "tally-windows-local",
+  "version": "1.0.0",
+  "description": "Windows-only Tally to SQLite database sync solution",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "sync": "node tally-sync.js",
+    "test": "node test-setup.js",
+    "migrate": "node migrate-all-data.js"
+  },
+  "keywords": ["tally", "sqlite", "windows", "sync"],
+  "author": "Rajkumar Neelappa",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "sqlite3": "^5.1.6",
+    "js-yaml": "^4.1.0",
+    "cors": "^2.8.5",
+    "axios": "^1.6.0"
+  }
+}
