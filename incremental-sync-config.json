@@ -1,0 +1,47 @@
+{
+  "incremental_sync": {
+    "enabled": true,
+    "schedule": {
+      "frequency_minutes": 5,
+      "business_hours_only": true,
+      "business_hours": {
+        "start": "09:00",
+        "end": "18:00"
+      },
+      "working_days": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+      "timezone": "Asia/Kolkata"
+    },
+    "change_detection": {
+      "method": "alterid",
+      "track_master_changes": true,
+      "track_transaction_changes": true,
+      "minimum_change_threshold": 1
+    },
+    "sync_settings": {
+      "batch_size": 100,
+      "max_retries": 3,
+      "retry_delay_seconds": 5,
+      "timeout_seconds": 60,
+      "parallel_tables": false
+    },
+    "logging": {
+      "level": "info",
+      "log_file": "./logs/incremental-sync.log",
+      "max_log_size_mb": 10,
+      "keep_logs_days": 30
+    }
+  },
+  "notifications": {
+    "enabled": true,
+    "on_success": true,
+    "on_failure": true,
+    "on_large_changes": true,
+    "large_change_threshold": 100
+  },
+  "monitoring": {
+    "health_check_interval_minutes": 15,
+    "performance_tracking": true,
+    "error_tracking": true,
+    "sync_history_retention_days": 90
+  }
+}

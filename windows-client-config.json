@@ -1,12 +1,12 @@
 {
   "company": {
     "id": "629f49fb-983e-4141-8c48-e1423b39e921",
-    "name": "SKM Technologies",
+    "name": "SKM IMPEX-CHENNAI-(24-25)",
     "division_id": "37f3cc0c-58ad-4baf-b309-360116ffc3cd",
     "division_name": "MAIN"
   },
   "railway": {
-    "api_base": "https://tally-sync-vyaapari360-production.up.railway.app",
+    "api_base": "https://tally-sync-vyaapari360-railway-production.up.railway.app",
     "endpoints": {
       "health": "/api/v1/health",
       "bulk_sync": "/api/v1/bulk-sync",
@@ -23,7 +23,7 @@
   "tally": {
     "server": "localhost",
     "port": 9000,
-    "company": "",
+    "company": "SKM IMPEX-CHENNAI-(24-25)",
     "fromdate": "auto",
     "todate": "auto",
     "sync": "full",
@@ -117,11 +117,41 @@
       "required_fields": ["guid", "voucher_guid", "stock_item_name", "quantity"],
       "sync_priority": 12
     },
+    "mst_stock_group": {
+      "table": "stock_items",
+      "primary_key": "guid",
+      "required_fields": ["guid", "name"],
+      "sync_priority": 3
+    },
+    "mst_stock_item": {
+      "table": "stock_items",
+      "primary_key": "guid",
+      "required_fields": ["guid", "name"],
+      "sync_priority": 3
+    },
     "trn_bill": {
       "table": "bills",
       "primary_key": "guid",
       "required_fields": ["guid", "name"],
       "sync_priority": 13
+    },
+    "trn_bank": {
+      "table": "accounting_entries",
+      "primary_key": "guid",
+      "required_fields": ["guid", "voucher_guid"],
+      "sync_priority": 14
+    },
+    "trn_batch": {
+      "table": "inventory_entries",
+      "primary_key": "guid",
+      "required_fields": ["guid", "voucher_guid"],
+      "sync_priority": 15
+    },
+    "trn_inventory_accounting": {
+      "table": "accounting_entries",
+      "primary_key": "guid",
+      "required_fields": ["guid", "voucher_guid"],
+      "sync_priority": 16
     }
   }
 }
