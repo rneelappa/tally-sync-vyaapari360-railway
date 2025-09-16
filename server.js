@@ -76,7 +76,7 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Ledgers table (master data)
+  -- Ledgers table (master data) - FIXED SCHEMA
   CREATE TABLE IF NOT EXISTS ledgers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
@@ -85,10 +85,10 @@ const createTablesSQL = `
     alias TEXT,
     description TEXT,
     notes TEXT,
-    is_revenue BOOLEAN DEFAULT 0,
-    is_deemedpositive BOOLEAN DEFAULT 0,
-    opening_balance DECIMAL(17,2) DEFAULT 0,
-    closing_balance DECIMAL(17,2) DEFAULT 0,
+    is_revenue INTEGER DEFAULT 0,
+    is_deemedpositive INTEGER DEFAULT 0,
+    opening_balance REAL DEFAULT 0,
+    closing_balance REAL DEFAULT 0,
     mailing_name TEXT,
     mailing_address TEXT,
     mailing_state TEXT,
@@ -100,7 +100,7 @@ const createTablesSQL = `
     gst_registration_type TEXT,
     gst_supply_type TEXT,
     gst_duty_head TEXT,
-    tax_rate DECIMAL(9,4) DEFAULT 0,
+    tax_rate REAL DEFAULT 0,
     bank_account_holder TEXT,
     bank_account_number TEXT,
     bank_ifsc TEXT,
@@ -108,6 +108,11 @@ const createTablesSQL = `
     bank_name TEXT,
     bank_branch TEXT,
     bill_credit_period INTEGER DEFAULT 0,
+    -- Additional Tally fields that might be missing
+    alterid INTEGER DEFAULT 0,
+    sort_position INTEGER DEFAULT 0,
+    bill_credit_period_type TEXT,
+    bill_credit_limit REAL DEFAULT 0,
     company_id TEXT NOT NULL, -- UUID format
     division_id TEXT NOT NULL, -- UUID format
     sync_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -404,8 +409,15 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
               updated_at = CURRENT_TIMESTAMP
             `;
             
-            await runSQL(sql, values);
-            totalProcessed++;
+            try {
+              await runSQL(sql, values);
+              totalProcessed++;
+            } catch (sqlError) {
+              console.error(`❌ SQL Error for record ${index + 1}:`, sqlError.message);
+              console.error(`   Record:`, JSON.stringify(record, null, 2));
+              console.error(`   SQL:`, sql);
+              totalErrors++;
+            }
           }
           
           console.log(`✅ Batch ${Math.floor(i/batchSize) + 1}: ${batch.length} records processed`);
