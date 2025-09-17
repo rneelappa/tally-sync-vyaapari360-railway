@@ -245,7 +245,7 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Vouchers table (transaction data) - FIXED to match Tally YAML exactly
+  -- Vouchers table (transaction data) - COMPLETE schema with all fields
   CREATE TABLE IF NOT EXISTS vouchers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
@@ -257,6 +257,7 @@ const createTablesSQL = `
     narration TEXT,
     party_name TEXT, -- Tally field: PartyLedgerName
     place_of_supply TEXT,
+    amount REAL DEFAULT 0, -- CRITICAL: Missing amount field
     is_invoice INTEGER DEFAULT 0,
     is_accounting_voucher INTEGER DEFAULT 0,
     is_inventory_voucher INTEGER DEFAULT 0,

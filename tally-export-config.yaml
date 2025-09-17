@@ -610,6 +610,9 @@ transaction:
         - name: place_of_supply
           field: PlaceOfSupply
           type: text
+        - name: amount
+          field: Amount
+          type: amount
         - name: is_invoice
           field: IsInvoice
           type: logical
