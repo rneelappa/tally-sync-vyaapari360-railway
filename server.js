@@ -13,16 +13,19 @@ console.log('🚀 Railway SQLite Server Starting...');
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 
-// SQLite Database Setup
-const DB_PATH = process.env.NODE_ENV === 'production' ? '/app/data/tally.db' : './tally.db';
+// SQLite Database Setup with Persistent Volume
+const DB_PATH = process.env.NODE_ENV === 'production' ? '/data/tally.db' : './tally.db';
 
-// Ensure data directory exists in production
-if (process.env.NODE_ENV === 'production') {
-  const dataDir = path.dirname(DB_PATH);
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
+// Ensure data directory exists
+const dataDir = path.dirname(DB_PATH);
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  console.log(`📁 Created data directory: ${dataDir}`);
 }
+
+// Check if database exists
+const dbExists = fs.existsSync(DB_PATH);
+console.log(`🗄️ Database status: ${dbExists ? 'EXISTS' : 'NEW'} at ${DB_PATH}`);
 
 const db = new sqlite3.Database(DB_PATH, (err) => {
   if (err) {
@@ -30,6 +33,12 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
     process.exit(1);
   } else {
     console.log('✅ Connected to SQLite database:', DB_PATH);
+    if (dbExists) {
+      console.log('🔄 Existing database found - checking data integrity...');
+      checkDatabaseIntegrity();
+    } else {
+      console.log('🆕 New database created - will auto-populate from Tally');
+    }
   }
 });
 
@@ -37,6 +46,26 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
 db.run('PRAGMA foreign_keys = ON');
 db.run('PRAGMA journal_mode = WAL');
 db.run('PRAGMA synchronous = NORMAL');
+
+// Database integrity check
+async function checkDatabaseIntegrity() {
+  try {
+    const stats = await getAllSQL(
+      "SELECT name, COUNT(*) as count FROM sqlite_master WHERE type='table' GROUP BY name"
+    );
+    
+    const tableCount = stats.length;
+    console.log(`📊 Found ${tableCount} existing tables`);
+    
+    if (tableCount >= 10) {
+      console.log('✅ Database appears complete - ready for incremental sync');
+    } else {
+      console.log('⚠️ Database incomplete - may need re-migration');
+    }
+  } catch (error) {
+    console.log('⚠️ Could not check database integrity:', error.message);
+  }
+}
 
 // Database Schema with UUID company_id and division_id
 const createTablesSQL = `
