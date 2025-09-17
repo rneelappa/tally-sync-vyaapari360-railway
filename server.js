@@ -56,18 +56,19 @@ const createTablesSQL = `
     UNIQUE(company_id, division_id, table_name)
   );
 
-  -- Groups table (master data)
+  -- Groups table (master data) - FIXED to match Tally YAML config
   CREATE TABLE IF NOT EXISTS groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     parent TEXT,
     primary_group TEXT,
-    is_revenue BOOLEAN DEFAULT 0,
-    is_deemedpositive BOOLEAN DEFAULT 0,
-    is_reserved BOOLEAN DEFAULT 0,
-    affects_gross_profit BOOLEAN DEFAULT 0,
-    sort_position INTEGER,
+    is_revenue INTEGER DEFAULT 0,
+    is_deemedpositive INTEGER DEFAULT 0,
+    is_reserved INTEGER DEFAULT 0,
+    affects_gross_profit INTEGER DEFAULT 0,
+    sort_position INTEGER DEFAULT 0,
+    alterid INTEGER DEFAULT 0,
     company_id TEXT NOT NULL, -- UUID format
     division_id TEXT NOT NULL, -- UUID format
     sync_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -211,24 +212,23 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Vouchers table (transaction data)
+  -- Vouchers table (transaction data) - FIXED to match Tally YAML exactly
   CREATE TABLE IF NOT EXISTS vouchers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
-    voucher_number TEXT NOT NULL,
-    voucher_type TEXT NOT NULL,
-    date DATE NOT NULL,
-    reference TEXT,
-    reference_date DATE,
+    date TEXT, -- Tally date format
+    voucher_type TEXT,
+    voucher_number TEXT,
+    reference_number TEXT,
+    reference_date TEXT,
     narration TEXT,
-    party_ledger_name TEXT,
+    party_name TEXT, -- Tally field: PartyLedgerName
     place_of_supply TEXT,
-    amount DECIMAL(17,2) DEFAULT 0,
-    is_cancelled BOOLEAN DEFAULT 0,
-    is_optional BOOLEAN DEFAULT 0,
-    is_invoice BOOLEAN DEFAULT 0,
-    is_accounting BOOLEAN DEFAULT 1,
-    is_inventory BOOLEAN DEFAULT 0,
+    is_invoice INTEGER DEFAULT 0,
+    is_accounting_voucher INTEGER DEFAULT 0,
+    is_inventory_voucher INTEGER DEFAULT 0,
+    is_order_voucher INTEGER DEFAULT 0,
+    alterid INTEGER DEFAULT 0,
     company_id TEXT NOT NULL, -- UUID format
     division_id TEXT NOT NULL, -- UUID format
     sync_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -237,15 +237,15 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Accounting Entries table (transaction data)
+  -- Accounting Entries table (transaction data) - FIXED to match Tally YAML exactly
   CREATE TABLE IF NOT EXISTS accounting_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
-    voucher_guid TEXT,
-    ledger_name TEXT NOT NULL,
-    ledger_guid TEXT,
-    amount DECIMAL(17,2) DEFAULT 0,
-    is_party_ledger BOOLEAN DEFAULT 0,
+    ledger TEXT, -- Tally field: LedgerName
+    amount REAL DEFAULT 0,
+    amount_forex REAL DEFAULT 0,
+    currency TEXT,
+    alterid INTEGER DEFAULT 0,
     company_id TEXT NOT NULL, -- UUID format
     division_id TEXT NOT NULL, -- UUID format
     sync_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -254,17 +254,21 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Inventory Entries table (transaction data)
+  -- Inventory Entries table (transaction data) - FIXED to match Tally YAML exactly
   CREATE TABLE IF NOT EXISTS inventory_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
-    voucher_guid TEXT,
-    stock_item_name TEXT NOT NULL,
-    stock_item_guid TEXT,
-    quantity DECIMAL(17,6) DEFAULT 0,
-    rate DECIMAL(17,6) DEFAULT 0,
-    amount DECIMAL(17,2) DEFAULT 0,
+    item TEXT, -- Tally field: StockItemName
+    quantity REAL DEFAULT 0,
+    rate REAL DEFAULT 0,
+    amount REAL DEFAULT 0,
+    additional_amount REAL DEFAULT 0,
+    discount_amount REAL DEFAULT 0,
     godown TEXT,
+    tracking_number TEXT,
+    order_number TEXT,
+    order_due_date TEXT,
+    alterid INTEGER DEFAULT 0,
     company_id TEXT NOT NULL, -- UUID format
     division_id TEXT NOT NULL, -- UUID format
     sync_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -764,10 +768,15 @@ app.post('/api/v1/query/:companyId/:divisionId', async (req, res) => {
         queryParams.push(since_alter_id);
       }
       
-      // Add ordering and pagination
+      // Add ordering and pagination - FIXED column names
       if (actualTable === 'vouchers') {
         query += ` ORDER BY date DESC, voucher_number`;
+      } else if (actualTable === 'accounting_entries') {
+        query += ` ORDER BY ledger, guid`;
+      } else if (actualTable === 'inventory_entries') {
+        query += ` ORDER BY item, guid`;
       } else {
+        // For tables with 'name' column (groups, ledgers, stock_items, etc.)
         query += ` ORDER BY name, guid`;
       }
       
