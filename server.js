@@ -399,7 +399,8 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
         const batch = enrichedData.slice(i, i + batchSize);
         
         try {
-          for (const record of batch) {
+          for (let recordIndex = 0; recordIndex < batch.length; recordIndex++) {
+            const record = batch[recordIndex];
             const columns = Object.keys(record);
             const placeholders = columns.map(() => '?').join(', ');
             const values = columns.map(col => record[col]);
@@ -417,7 +418,7 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
               await runSQL(sql, values);
               totalProcessed++;
             } catch (sqlError) {
-              console.error(`❌ SQL Error for record ${index + 1}:`, sqlError.message);
+              console.error(`❌ SQL Error for record ${recordIndex + 1}:`, sqlError.message);
               console.error(`   Record:`, JSON.stringify(record, null, 2));
               console.error(`   SQL:`, sql);
               totalErrors++;
