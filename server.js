@@ -270,10 +270,14 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Accounting Entries table (transaction data) - FIXED to match Tally YAML exactly
+  -- Accounting Entries table (transaction data) - FIXED with voucher relationships
   CREATE TABLE IF NOT EXISTS accounting_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
+    voucher_guid TEXT, -- CRITICAL: Links to parent voucher
+    voucher_number TEXT, -- CRITICAL: Links to parent voucher
+    voucher_type TEXT,
+    voucher_date TEXT,
     ledger TEXT, -- Tally field: LedgerName
     amount REAL DEFAULT 0,
     amount_forex REAL DEFAULT 0,
@@ -287,10 +291,14 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Inventory Entries table (transaction data) - FIXED exact Tally field names
+  -- Inventory Entries table (transaction data) - FIXED with voucher relationships
   CREATE TABLE IF NOT EXISTS inventory_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
+    voucher_guid TEXT, -- CRITICAL: Links to parent voucher
+    voucher_number TEXT, -- CRITICAL: Links to parent voucher
+    voucher_type TEXT,
+    voucher_date TEXT,
     item TEXT, -- Tally field: StockItemName
     quantity REAL DEFAULT 0,
     rate REAL DEFAULT 0,
@@ -310,13 +318,19 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Create indexes for better performance
+  -- Create indexes for better performance and relationships
   CREATE INDEX IF NOT EXISTS idx_groups_company_division ON groups(company_id, division_id);
   CREATE INDEX IF NOT EXISTS idx_ledgers_company_division ON ledgers(company_id, division_id);
   CREATE INDEX IF NOT EXISTS idx_stock_items_company_division ON stock_items(company_id, division_id);
   CREATE INDEX IF NOT EXISTS idx_vouchers_company_division ON vouchers(company_id, division_id);
   CREATE INDEX IF NOT EXISTS idx_vouchers_date ON vouchers(date);
   CREATE INDEX IF NOT EXISTS idx_sync_metadata_company_division ON sync_metadata(company_id, division_id);
+  
+  -- CRITICAL: Indexes for voucher relationships
+  CREATE INDEX IF NOT EXISTS idx_accounting_voucher_guid ON accounting_entries(voucher_guid);
+  CREATE INDEX IF NOT EXISTS idx_accounting_voucher_number ON accounting_entries(voucher_number);
+  CREATE INDEX IF NOT EXISTS idx_inventory_voucher_guid ON inventory_entries(voucher_guid);
+  CREATE INDEX IF NOT EXISTS idx_inventory_voucher_number ON inventory_entries(voucher_number);
 `;
 
 // Initialize database tables
@@ -410,26 +424,60 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
       });
     }
     
-    // Add UUID company_id and division_id to each record
-    const enrichedData = data.map(record => ({
-      ...record,
-      company_id: companyId,
-      division_id: divisionId,
-      sync_timestamp: new Date().toISOString(),
-      source: 'tally'
-    }));
+    // Clean and validate data before processing
+    const enrichedData = data.map(record => {
+      // Clean field names (remove \r characters)
+      const cleanedRecord = {};
+      Object.entries(record).forEach(([key, value]) => {
+        const cleanKey = key.replace(/\r/g, '').trim();
+        
+        // Validate and clean values
+        let cleanValue = value;
+        
+        // Handle invalid date values
+        if (cleanKey.includes('date') && (value === 'ñ' || value === '±' || !value)) {
+          cleanValue = null;
+        }
+        
+        // Handle invalid numeric values
+        if (typeof value === 'string' && (value === 'ñ' || value === '±')) {
+          cleanValue = null;
+        }
+        
+        // Clean string values
+        if (typeof value === 'string') {
+          cleanValue = value.replace(/\r/g, '').replace(/\n/g, '').trim();
+          if (cleanValue === '') cleanValue = null;
+        }
+        
+        cleanedRecord[cleanKey] = cleanValue;
+      });
+      
+      // Add metadata
+      return {
+        ...cleanedRecord,
+        company_id: companyId,
+        division_id: divisionId,
+        sync_timestamp: new Date().toISOString(),
+        source: 'tally'
+      };
+    });
     
-    // Process data in batches
+    // Process data in batches with optimized logging
     const batchSize = 100;
     const results = [];
     let totalProcessed = 0;
     let totalErrors = 0;
+    const errorSummary = {};
     
     await runSQL('BEGIN TRANSACTION');
     
     try {
       for (let i = 0; i < enrichedData.length; i += batchSize) {
         const batch = enrichedData.slice(i, i + batchSize);
+        const batchId = `batch_${Math.floor(i/batchSize) + 1}_${Date.now()}`;
+        let batchProcessed = 0;
+        let batchErrors = 0;
         
         try {
           for (let recordIndex = 0; recordIndex < batch.length; recordIndex++) {
@@ -449,33 +497,67 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
             
             try {
               await runSQL(sql, values);
+              batchProcessed++;
               totalProcessed++;
             } catch (sqlError) {
-              console.error(`❌ SQL Error for record ${recordIndex + 1}:`, sqlError.message);
-              console.error(`   Record:`, JSON.stringify(record, null, 2));
-              console.error(`   SQL:`, sql);
+              batchErrors++;
               totalErrors++;
+              
+              // Group similar errors to reduce logging
+              const errorKey = sqlError.message.split(':')[1]?.trim() || 'unknown_error';
+              if (!errorSummary[errorKey]) {
+                errorSummary[errorKey] = {
+                  count: 0,
+                  firstRecord: record,
+                  firstSQL: sql,
+                  table: table
+                };
+              }
+              errorSummary[errorKey].count++;
+              
+              // Only log first occurrence of each error type
+              if (errorSummary[errorKey].count === 1) {
+                console.error(`❌ SQL Error [${batchId}]: ${sqlError.message}`);
+                console.error(`   First failing record:`, JSON.stringify(record, null, 2));
+              }
             }
           }
           
-          console.log(`✅ Batch ${Math.floor(i/batchSize) + 1}: ${batch.length} records processed`);
+          // Optimized batch logging
+          if (batchErrors === 0) {
+            console.log(`✅ Batch ${Math.floor(i/batchSize) + 1}: ${batchProcessed} records processed`);
+          } else {
+            console.log(`⚠️ Batch ${Math.floor(i/batchSize) + 1}: ${batchProcessed} processed, ${batchErrors} errors`);
+          }
           
           results.push({
             batch: Math.floor(i/batchSize) + 1,
             records: batch.length,
-            success: true
+            processed: batchProcessed,
+            errors: batchErrors,
+            success: batchErrors === 0
           });
           
         } catch (batchError) {
-          console.error(`❌ Batch ${Math.floor(i/batchSize) + 1} error:`, batchError.message);
+          console.error(`❌ Batch ${Math.floor(i/batchSize) + 1} failed:`, batchError.message);
           totalErrors += batch.length;
           results.push({
             batch: Math.floor(i/batchSize) + 1,
             records: batch.length,
+            processed: 0,
+            errors: batch.length,
             success: false,
             error: batchError.message
           });
         }
+      }
+      
+      // Log error summary instead of individual errors
+      if (Object.keys(errorSummary).length > 0) {
+        console.log('\n📊 ERROR SUMMARY:');
+        Object.entries(errorSummary).forEach(([errorType, info]) => {
+          console.log(`   ❌ ${errorType}: ${info.count} occurrences in table ${info.table}`);
+        });
       }
       
       // Update sync metadata
@@ -1427,6 +1509,83 @@ app.get('/api/v1/voucher/:companyId/:divisionId/:voucherNumber', async (req, res
   }
 });
 
+// Data validation endpoint for debugging
+app.post('/api/v1/validate-data/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { table, data } = req.body;
+    
+    if (!table || !data || !Array.isArray(data)) {
+      return res.status(400).json({
+        success: false,
+        error: 'table and data array are required'
+      });
+    }
+    
+    const validationResults = {
+      total_records: data.length,
+      clean_records: 0,
+      problematic_records: 0,
+      field_issues: {},
+      value_issues: {},
+      sample_clean_record: null,
+      sample_problematic_record: null
+    };
+    
+    data.forEach((record, index) => {
+      let hasIssues = false;
+      
+      // Check for \r in field names
+      Object.keys(record).forEach(key => {
+        if (key.includes('\r')) {
+          hasIssues = true;
+          const cleanKey = key.replace(/\r/g, '');
+          if (!validationResults.field_issues[key]) {
+            validationResults.field_issues[key] = { count: 0, cleanKey };
+          }
+          validationResults.field_issues[key].count++;
+        }
+      });
+      
+      // Check for invalid values
+      Object.entries(record).forEach(([key, value]) => {
+        if (value === 'ñ' || value === '±') {
+          hasIssues = true;
+          if (!validationResults.value_issues[key]) {
+            validationResults.value_issues[key] = { count: 0, invalidValues: [] };
+          }
+          validationResults.value_issues[key].count++;
+          if (!validationResults.value_issues[key].invalidValues.includes(value)) {
+            validationResults.value_issues[key].invalidValues.push(value);
+          }
+        }
+      });
+      
+      if (hasIssues) {
+        validationResults.problematic_records++;
+        if (!validationResults.sample_problematic_record) {
+          validationResults.sample_problematic_record = record;
+        }
+      } else {
+        validationResults.clean_records++;
+        if (!validationResults.sample_clean_record) {
+          validationResults.sample_clean_record = record;
+        }
+      }
+    });
+    
+    res.json({
+      success: true,
+      data: validationResults
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Endpoint list for debugging
 app.get('/api/v1/endpoints', (req, res) => {
   res.json({
@@ -1455,6 +1614,7 @@ app.get('/api/v1/endpoints', (req, res) => {
       ],
       verification_endpoints: [
         'GET /api/v1/voucher/{companyId}/{divisionId}/{voucherNumber}',
+        'POST /api/v1/validate-data/{companyId}/{divisionId}',
         'GET /api/v1/endpoints'
       ]
     }

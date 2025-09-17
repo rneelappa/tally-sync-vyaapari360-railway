@@ -635,6 +635,18 @@ transaction:
         - name: guid
           field: Guid
           type: text
+        - name: voucher_guid
+          field: ..Guid
+          type: text
+        - name: voucher_number
+          field: ..VoucherNumber
+          type: text
+        - name: voucher_type
+          field: ..VoucherTypeName
+          type: text
+        - name: voucher_date
+          field: ..Date
+          type: date
         - name: ledger
           field: LedgerName
           type: text
@@ -660,6 +672,18 @@ transaction:
         - name: guid
           field: Guid
           type: text
+        - name: voucher_guid
+          field: ..Guid
+          type: text
+        - name: voucher_number
+          field: ..VoucherNumber
+          type: text
+        - name: voucher_type
+          field: ..VoucherTypeName
+          type: text
+        - name: voucher_date
+          field: ..Date
+          type: date
         - name: item
           field: StockItemName
           type: text
