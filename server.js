@@ -684,11 +684,23 @@ app.get('/api/v1/stats/:companyId/:divisionId', async (req, res) => {
   }
 });
 
-// Query endpoint for custom SQL queries
+// POST /api/v1/query endpoint - EXACTLY what Lovable.dev Supabase function expects
 app.post('/api/v1/query/:companyId/:divisionId', async (req, res) => {
   try {
     const { companyId, divisionId } = req.params;
-    const { sql, params } = req.body;
+    const { 
+      table, 
+      filters = {}, 
+      limit = 1000, 
+      offset = 0,
+      since_alter_id,
+      date_from,
+      date_to,
+      sql,
+      params
+    } = req.body;
+    
+    console.log(`📡 Query request: table=${table}, limit=${limit}, offset=${offset}`);
     
     if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
       return res.status(400).json({
@@ -697,31 +709,115 @@ app.post('/api/v1/query/:companyId/:divisionId', async (req, res) => {
       });
     }
     
-    if (!sql) {
+    let query;
+    let queryParams = [];
+    
+    if (sql) {
+      // Custom SQL query
+      query = sql;
+      queryParams = params || [];
+    } else if (table) {
+      // Table-based query (Supabase function format)
+      
+      // Map table names to actual SQLite table names
+      const tableMapping = {
+        'groups': 'groups',
+        'ledgers': 'ledgers', 
+        'stock_items': 'stock_items',
+        'voucher_types': 'voucher_types',
+        'cost_centers': 'cost_centres',
+        'employees': 'employees', // Will return empty
+        'uoms': 'units',
+        'godowns': 'godowns',
+        'vouchers': 'vouchers',
+        'accounting': 'accounting_entries',
+        'accounting_entries': 'accounting_entries',
+        'inventory': 'inventory_entries',
+        'inventory_entries': 'inventory_entries'
+      };
+      
+      const actualTable = tableMapping[table] || table;
+      
+      // Build base query
+      query = `SELECT * FROM ${actualTable} WHERE company_id = ? AND division_id = ?`;
+      queryParams = [companyId, divisionId];
+      
+      // Add filters
+      Object.entries(filters).forEach(([key, value]) => {
+        query += ` AND ${key} = ?`;
+        queryParams.push(value);
+      });
+      
+      // Add date filters
+      if (date_from) {
+        query += ` AND date >= ?`;
+        queryParams.push(date_from);
+      }
+      if (date_to) {
+        query += ` AND date <= ?`;
+        queryParams.push(date_to);
+      }
+      
+      // Add AlterID filter for incremental sync
+      if (since_alter_id) {
+        query += ` AND alterid > ?`;
+        queryParams.push(since_alter_id);
+      }
+      
+      // Add ordering and pagination
+      if (actualTable === 'vouchers') {
+        query += ` ORDER BY date DESC, voucher_number`;
+      } else {
+        query += ` ORDER BY name, guid`;
+      }
+      
+      query += ` LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`;
+      
+    } else {
       return res.status(400).json({
         success: false,
-        error: 'SQL query is required'
+        error: 'Either table or sql parameter is required'
       });
     }
     
-    // Security: Only allow SELECT statements
-    if (!sql.trim().toLowerCase().startsWith('select')) {
+    // Security check
+    if (!query.trim().toLowerCase().startsWith('select')) {
       return res.status(400).json({
         success: false,
         error: 'Only SELECT queries are allowed'
       });
     }
     
-    const results = await getAllSQL(sql, params || []);
+    console.log(`🔍 Executing query: ${query.substring(0, 100)}...`);
     
+    const results = await getAllSQL(query, queryParams);
+    
+    // Get total count for pagination
+    let total = results.length;
+    if (table && limit) {
+      const countQuery = query.replace(/SELECT \* FROM/, 'SELECT COUNT(*) as count FROM').split(' ORDER BY')[0];
+      const countResult = await getSQL(countQuery, queryParams.slice(0, -2)); // Remove LIMIT/OFFSET params
+      total = countResult?.count || results.length;
+    }
+    
+    // Calculate next offset
+    const nextOffset = offset + results.length < total ? offset + results.length : null;
+    
+    console.log(`✅ Query result: ${results.length} records (total: ${total})`);
+    
+    // Standardized response format for Lovable.dev
     res.json({
       success: true,
-      data: {
-        results,
-        count: results.length,
-        company_id: companyId,
-        division_id: divisionId
-      }
+      data: results, // Direct array format that Supabase function expects
+      total: total,
+      count: results.length,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      next_offset: nextOffset,
+      table: table,
+      company_id: companyId,
+      division_id: divisionId,
+      timestamp: new Date().toISOString()
     });
     
   } catch (error) {
@@ -729,7 +825,9 @@ app.post('/api/v1/query/:companyId/:divisionId', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Query execution failed',
-      details: error.message
+      details: error.message,
+      table: req.body.table,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -760,7 +858,198 @@ app.get('/api/v1/tables', async (req, res) => {
 });
 
 // ========================================
-// LOVABLE.DEV COMPATIBLE ENDPOINTS
+// VERSIONED API ENDPOINTS (Recommended Option B)
+// ========================================
+
+// /api/v1/masters/* endpoints
+app.get('/api/v1/masters/groups/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const groups = await getAllSQL(
+      'SELECT * FROM groups WHERE company_id = ? AND division_id = ? ORDER BY name',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: groups,
+      total: groups.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/v1/masters/ledgers/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const ledgers = await getAllSQL(
+      'SELECT * FROM ledgers WHERE company_id = ? AND division_id = ? ORDER BY name',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: ledgers,
+      total: ledgers.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/v1/masters/stock-items/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const stockItems = await getAllSQL(
+      'SELECT * FROM stock_items WHERE company_id = ? AND division_id = ? ORDER BY name',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: stockItems,
+      total: stockItems.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/v1/masters/voucher-types/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const voucherTypes = await getAllSQL(
+      'SELECT * FROM voucher_types WHERE company_id = ? AND division_id = ? ORDER BY name',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: voucherTypes,
+      total: voucherTypes.length,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/v1/vouchers/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    const { limit = 1000, offset = 0 } = req.query;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const vouchers = await getAllSQL(
+      `SELECT * FROM vouchers 
+       WHERE company_id = ? AND division_id = ? 
+       ORDER BY date DESC, voucher_number 
+       LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`,
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: vouchers,
+      total: vouchers.length,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/v1/accounting-entries/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    const { limit = 1000, offset = 0 } = req.query;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const accounting = await getAllSQL(
+      `SELECT * FROM accounting_entries 
+       WHERE company_id = ? AND division_id = ? 
+       ORDER BY ledger_name 
+       LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`,
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: accounting,
+      total: accounting.length,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/v1/inventory-entries/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    const { limit = 1000, offset = 0 } = req.query;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const inventory = await getAllSQL(
+      `SELECT * FROM inventory_entries 
+       WHERE company_id = ? AND division_id = ? 
+       ORDER BY stock_item_name 
+       LIMIT ${parseInt(limit)} OFFSET ${parseInt(offset)}`,
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: inventory,
+      total: inventory.length,
+      limit: parseInt(limit),
+      offset: parseInt(offset),
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// LOVABLE.DEV COMPATIBLE ENDPOINTS (Legacy)
 // ========================================
 
 // Masters endpoints for Lovable.dev compatibility
@@ -914,6 +1203,221 @@ app.get('/accounting/:companyId/:divisionId', async (req, res) => {
   }
 });
 
+// Additional missing endpoints for Lovable.dev compatibility
+app.get('/masters/cost-centers/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const costCenters = await getAllSQL(
+      'SELECT * FROM cost_centres WHERE company_id = ? AND division_id = ?',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: costCenters,
+        count: costCenters.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/masters/employees/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    // Create empty response for employees (not in our current schema)
+    res.json({
+      success: true,
+      data: {
+        records: [],
+        count: 0
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/masters/uoms/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const uoms = await getAllSQL(
+      'SELECT * FROM units WHERE company_id = ? AND division_id = ?',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: uoms,
+        count: uoms.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Enhanced godowns endpoint (already exists but ensuring it's complete)
+app.get('/masters/godowns/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const godowns = await getAllSQL(
+      'SELECT * FROM godowns WHERE company_id = ? AND division_id = ?',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: godowns,
+        count: godowns.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Additional critical endpoints for complete Lovable.dev compatibility
+app.get('/inventory/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const inventory = await getAllSQL(
+      'SELECT * FROM inventory_entries WHERE company_id = ? AND division_id = ?',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: inventory,
+        count: inventory.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Individual voucher endpoint for detailed verification
+app.get('/api/v1/voucher/:companyId/:divisionId/:voucherNumber', async (req, res) => {
+  try {
+    const { companyId, divisionId, voucherNumber } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    // Get main voucher
+    const voucher = await getSQL(
+      'SELECT * FROM vouchers WHERE company_id = ? AND division_id = ? AND voucher_number = ?',
+      [companyId, divisionId, voucherNumber]
+    );
+    
+    if (!voucher) {
+      return res.status(404).json({ success: false, error: 'Voucher not found' });
+    }
+    
+    // Get related accounting entries
+    const accountingEntries = await getAllSQL(
+      'SELECT * FROM accounting_entries WHERE voucher_guid = ? AND company_id = ? AND division_id = ?',
+      [voucher.guid, companyId, divisionId]
+    );
+    
+    // Get related inventory entries
+    const inventoryEntries = await getAllSQL(
+      'SELECT * FROM inventory_entries WHERE voucher_guid = ? AND company_id = ? AND division_id = ?',
+      [voucher.guid, companyId, divisionId]
+    );
+    
+    // Get party details
+    const partyDetails = await getSQL(
+      'SELECT * FROM ledgers WHERE name = ? AND company_id = ? AND division_id = ?',
+      [voucher.party_ledger_name, companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        voucher: voucher,
+        accounting_entries: accountingEntries,
+        inventory_entries: inventoryEntries,
+        party_details: partyDetails,
+        relationships: {
+          accounting_count: accountingEntries.length,
+          inventory_count: inventoryEntries.length,
+          party_found: !!partyDetails
+        }
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Endpoint list for debugging
+app.get('/api/v1/endpoints', (req, res) => {
+  res.json({
+    success: true,
+    data: {
+      tally_sync_endpoints: [
+        'POST /api/v1/bulk-sync/{companyId}/{divisionId}',
+        'GET /api/v1/metadata/{companyId}/{divisionId}',
+        'GET /api/v1/sync-status/{companyId}/{divisionId}',
+        'GET /api/v1/stats/{companyId}/{divisionId}',
+        'POST /api/v1/query/{companyId}/{divisionId}',
+        'GET /api/v1/tables'
+      ],
+      lovable_compatible_endpoints: [
+        'GET /masters/groups/{companyId}/{divisionId}',
+        'GET /masters/ledgers/{companyId}/{divisionId}',
+        'GET /masters/stock-items/{companyId}/{divisionId}',
+        'GET /masters/voucher-types/{companyId}/{divisionId}',
+        'GET /masters/cost-centers/{companyId}/{divisionId}',
+        'GET /masters/employees/{companyId}/{divisionId}',
+        'GET /masters/uoms/{companyId}/{divisionId}',
+        'GET /masters/godowns/{companyId}/{divisionId}',
+        'GET /vouchers/{companyId}/{divisionId}',
+        'GET /accounting/{companyId}/{divisionId}',
+        'GET /inventory/{companyId}/{divisionId}'
+      ],
+      verification_endpoints: [
+        'GET /api/v1/voucher/{companyId}/{divisionId}/{voucherNumber}',
+        'GET /api/v1/endpoints'
+      ]
+    }
+  });
+});
+
 // ========================================
 // END LOVABLE.DEV COMPATIBLE ENDPOINTS
 // ========================================
@@ -961,8 +1465,16 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`💰 Ledgers: GET /masters/ledgers/{companyId}/{divisionId}`);
   console.log(`📦 Stock Items: GET /masters/stock-items/{companyId}/{divisionId}`);
   console.log(`📋 Voucher Types: GET /masters/voucher-types/{companyId}/{divisionId}`);
+  console.log(`🏢 Cost Centers: GET /masters/cost-centers/{companyId}/{divisionId}`);
+  console.log(`👥 Employees: GET /masters/employees/{companyId}/{divisionId}`);
+  console.log(`📏 UOMs: GET /masters/uoms/{companyId}/{divisionId}`);
+  console.log(`🏭 Godowns: GET /masters/godowns/{companyId}/{divisionId}`);
   console.log(`💼 Vouchers: GET /vouchers/{companyId}/{divisionId}`);
   console.log(`💰 Accounting: GET /accounting/{companyId}/{divisionId}`);
+  console.log(`📦 Inventory: GET /inventory/{companyId}/{divisionId}`);
+  console.log(`\n🔍 VERIFICATION ENDPOINTS:`);
+  console.log(`📄 Individual Voucher: GET /api/v1/voucher/{companyId}/{divisionId}/{voucherNumber}`);
+  console.log(`📋 Endpoint List: GET /api/v1/endpoints`);
   console.log(`\n🗄️ Database: SQLite (${DB_PATH})`);
   console.log(`🆔 UUIDs Required: company_id and division_id must be valid UUIDs`);
   console.log(`✅ Ready for Tally sync from Windows client`);
