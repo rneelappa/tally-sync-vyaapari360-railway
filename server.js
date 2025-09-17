@@ -759,6 +759,165 @@ app.get('/api/v1/tables', async (req, res) => {
   }
 });
 
+// ========================================
+// LOVABLE.DEV COMPATIBLE ENDPOINTS
+// ========================================
+
+// Masters endpoints for Lovable.dev compatibility
+app.get('/masters/groups/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const groups = await getAllSQL(
+      'SELECT * FROM groups WHERE company_id = ? AND division_id = ?',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: groups,
+        count: groups.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/masters/ledgers/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const ledgers = await getAllSQL(
+      'SELECT * FROM ledgers WHERE company_id = ? AND division_id = ?',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: ledgers,
+        count: ledgers.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/masters/stock-items/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const stockItems = await getAllSQL(
+      'SELECT * FROM stock_items WHERE company_id = ? AND division_id = ?',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: stockItems,
+        count: stockItems.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/masters/voucher-types/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const voucherTypes = await getAllSQL(
+      'SELECT * FROM voucher_types WHERE company_id = ? AND division_id = ?',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: voucherTypes,
+        count: voucherTypes.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/vouchers/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const vouchers = await getAllSQL(
+      'SELECT * FROM vouchers WHERE company_id = ? AND division_id = ? ORDER BY date DESC',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: vouchers,
+        count: vouchers.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/accounting/:companyId/:divisionId', async (req, res) => {
+  try {
+    const { companyId, divisionId } = req.params;
+    
+    if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
+      return res.status(400).json({ success: false, error: 'Invalid UUIDs' });
+    }
+    
+    const accounting = await getAllSQL(
+      'SELECT * FROM accounting_entries WHERE company_id = ? AND division_id = ?',
+      [companyId, divisionId]
+    );
+    
+    res.json({
+      success: true,
+      data: {
+        records: accounting,
+        count: accounting.length
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ========================================
+// END LOVABLE.DEV COMPATIBLE ENDPOINTS
+// ========================================
+
 // UUID validation helper
 function isValidUUID(uuid) {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -790,15 +949,24 @@ process.on('SIGINT', () => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🚀 Railway SQLite Server running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/api/v1/health`);
+  console.log(`\n📦 TALLY SYNC ENDPOINTS:`);
   console.log(`📦 Bulk Sync: POST /api/v1/bulk-sync/{companyId}/{divisionId}`);
   console.log(`📋 Metadata: GET /api/v1/metadata/{companyId}/{divisionId}`);
   console.log(`📊 Sync Status: GET /api/v1/sync-status/{companyId}/{divisionId}`);
   console.log(`📈 Stats: GET /api/v1/stats/{companyId}/{divisionId}`);
   console.log(`🔍 Query: POST /api/v1/query/{companyId}/{divisionId}`);
   console.log(`📋 Tables: GET /api/v1/tables`);
+  console.log(`\n🌐 LOVABLE.DEV COMPATIBLE ENDPOINTS:`);
+  console.log(`📊 Groups: GET /masters/groups/{companyId}/{divisionId}`);
+  console.log(`💰 Ledgers: GET /masters/ledgers/{companyId}/{divisionId}`);
+  console.log(`📦 Stock Items: GET /masters/stock-items/{companyId}/{divisionId}`);
+  console.log(`📋 Voucher Types: GET /masters/voucher-types/{companyId}/{divisionId}`);
+  console.log(`💼 Vouchers: GET /vouchers/{companyId}/{divisionId}`);
+  console.log(`💰 Accounting: GET /accounting/{companyId}/{divisionId}`);
   console.log(`\n🗄️ Database: SQLite (${DB_PATH})`);
   console.log(`🆔 UUIDs Required: company_id and division_id must be valid UUIDs`);
   console.log(`✅ Ready for Tally sync from Windows client`);
+  console.log(`🌐 Ready for Lovable.dev integration`);
 });
 
 module.exports = app;
