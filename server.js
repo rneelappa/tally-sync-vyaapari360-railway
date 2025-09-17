@@ -197,13 +197,17 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Units table (master data)
+  -- Units table (master data) - FIXED column names to match Tally exactly
   CREATE TABLE IF NOT EXISTS units (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
-    formal_name TEXT,
-    is_simple_unit BOOLEAN DEFAULT 1,
+    formalname TEXT, -- Tally field name (no underscore)
+    is_simple_unit INTEGER DEFAULT 1,
+    base_units TEXT,
+    additional_units TEXT,
+    conversion TEXT,
+    alterid INTEGER DEFAULT 0,
     company_id TEXT NOT NULL, -- UUID format
     division_id TEXT NOT NULL, -- UUID format
     sync_timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -283,7 +287,7 @@ const createTablesSQL = `
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
-  -- Inventory Entries table (transaction data) - FIXED to match Tally YAML exactly
+  -- Inventory Entries table (transaction data) - FIXED exact Tally field names
   CREATE TABLE IF NOT EXISTS inventory_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     guid TEXT UNIQUE NOT NULL,
@@ -296,7 +300,7 @@ const createTablesSQL = `
     godown TEXT,
     tracking_number TEXT,
     order_number TEXT,
-    order_due_date TEXT,
+    order_duedate TEXT, -- Tally field name (no underscore, with \r suffix)
     alterid INTEGER DEFAULT 0,
     company_id TEXT NOT NULL, -- UUID format
     division_id TEXT NOT NULL, -- UUID format
