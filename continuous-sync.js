@@ -78,10 +78,20 @@ class ContinuousSync {
       // Step 1: Test connections
       await this.testConnections();
       
-      // Step 2: Get current AlterIDs from Tally
+      // Step 2: Check if Railway database is empty (auto-detect full migration need)
+      const isDatabaseEmpty = await this.checkIfDatabaseEmpty();
+      
+      if (isDatabaseEmpty) {
+        console.log('🚨 EMPTY DATABASE DETECTED - Running Full Migration');
+        console.log('===================================================');
+        await this.runFullMigration();
+        return;
+      }
+      
+      // Step 3: Get current AlterIDs from Tally (incremental sync)
       const tallyAlterIds = await this.getTallyAlterIds();
       
-      // Step 3: Check for changes
+      // Step 4: Check for changes
       const masterChanged = tallyAlterIds.master > this.lastAlterIdMaster;
       const transactionChanged = tallyAlterIds.transaction > this.lastAlterIdTransaction;
       
@@ -480,6 +490,125 @@ class ContinuousSync {
       case 'date':
         return trimmedValue.match(/^\d{4}-\d{2}-\d{2}$/) ? trimmedValue : null;
       default: return trimmedValue;
+    }
+  }
+
+  /**
+   * Check if Railway database is empty
+   */
+  async checkIfDatabaseEmpty() {
+    try {
+      const response = await axios.get(
+        `${this.config.railway.api_base}/api/v1/stats/${this.config.company.id}/${this.config.company.division_id}`,
+        { timeout: 10000 }
+      );
+      
+      if (response.data.success) {
+        const totalRecords = response.data.data.total_records;
+        console.log(`📊 Current Railway database: ${totalRecords} records`);
+        
+        // Consider empty if less than 100 records (should have thousands)
+        return totalRecords < 100;
+      }
+      
+      return true; // Assume empty if can't check
+    } catch (error) {
+      console.log('⚠️  Could not check database status, assuming empty');
+      return true;
+    }
+  }
+
+  /**
+   * Run full migration to populate empty database
+   */
+  async runFullMigration() {
+    console.log('🚀 Running Full Migration to populate empty Railway database...');
+    
+    let totalMigrated = 0;
+    
+    try {
+      // Migrate master data first
+      console.log('\n📊 Migrating Master Data...');
+      const masterTables = ['mst_group', 'mst_ledger', 'mst_stockitem', 'mst_vouchertype', 'mst_uom', 'mst_godown'];
+      
+      for (const tableName of masterTables) {
+        const tableConfig = this.masterTables.find(t => t.name === tableName);
+        if (tableConfig) {
+          const count = await this.migrateTableFull(tableConfig, 'master');
+          totalMigrated += count;
+          console.log(`✅ ${tableName}: ${count} records migrated`);
+        }
+      }
+      
+      // Migrate transaction data
+      console.log('\n💼 Migrating Transaction Data...');
+      const transactionTables = ['trn_voucher', 'trn_accounting', 'trn_inventory'];
+      
+      for (const tableName of transactionTables) {
+        const tableConfig = this.transactionTables.find(t => t.name === tableName);
+        if (tableConfig) {
+          const count = await this.migrateTableFull(tableConfig, 'transaction');
+          totalMigrated += count;
+          console.log(`✅ ${tableName}: ${count} records migrated`);
+          
+          if (tableName === 'trn_voucher') {
+            console.log(`   🎯 VOUCHERS: ${count} vouchers with dispatch & inventory details`);
+          }
+        }
+      }
+      
+      console.log(`\n🎉 Full Migration Complete: ${totalMigrated} total records migrated to Railway SQLite`);
+      
+      // Update AlterIDs for future incremental syncs
+      const tallyAlterIds = await this.getTallyAlterIds();
+      this.lastAlterIdMaster = tallyAlterIds.master;
+      this.lastAlterIdTransaction = tallyAlterIds.transaction;
+      
+      console.log(`📋 AlterIDs set for incremental sync - Master: ${this.lastAlterIdMaster}, Transaction: ${this.lastAlterIdTransaction}`);
+      
+    } catch (error) {
+      console.error('❌ Full migration failed:', error.message);
+    }
+  }
+
+  /**
+   * Migrate a single table (full migration)
+   */
+  async migrateTableFull(tableConfig, tableType) {
+    const mapping = this.config.database_mapping[tableConfig.name];
+    if (!mapping) {
+      console.log(`   ⚠️  No mapping for ${tableConfig.name}, skipping`);
+      return 0;
+    }
+    
+    try {
+      // Generate TDL XML (no incremental filters)
+      const xmlRequest = this.generateTDLXML(tableConfig);
+      
+      // Extract from Tally
+      const xmlResponse = await this.postTallyXML(xmlRequest);
+      if (!xmlResponse || xmlResponse.trim().length === 0) return 0;
+      
+      // Process data
+      const csvData = this.processXMLToCSV(xmlResponse, tableConfig);
+      const jsonData = this.csvToJSON(csvData, tableConfig);
+      if (jsonData.length === 0) return 0;
+      
+      // Add UUIDs and push to Railway
+      const enrichedData = jsonData.map(record => ({
+        ...record,
+        company_id: this.config.company.id,
+        division_id: this.config.company.division_id,
+        sync_timestamp: new Date().toISOString(),
+        source: 'full-migration'
+      }));
+      
+      await this.pushToRailway(mapping.table, enrichedData);
+      return jsonData.length;
+      
+    } catch (error) {
+      console.log(`   ❌ ${tableConfig.name} migration failed: ${error.message}`);
+      return 0;
     }
   }
 
