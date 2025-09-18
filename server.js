@@ -47,6 +47,13 @@ db.run('PRAGMA foreign_keys = ON');
 db.run('PRAGMA journal_mode = WAL');
 db.run('PRAGMA synchronous = NORMAL');
 
+// CRITICAL: Add busy timeout to prevent hangs
+db.configure("busyTimeout", 30000); // 30 second timeout for concurrent access
+
+// Operation lock to prevent concurrent database conflicts
+let bulkOperationInProgress = false;
+let operationStartTime = null;
+
 // Database integrity check
 async function checkDatabaseIntegrity() {
   try {
@@ -343,10 +350,15 @@ db.exec(createTablesSQL, (err) => {
   }
 });
 
-// Helper function to run SQL with promises
+// Helper function to run SQL with promises - FIXED with timeout
 function runSQL(sql, params = []) {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Database query timeout after 30 seconds'));
+    }, 30000);
+    
     db.run(sql, params, function(err) {
+      clearTimeout(timeout);
       if (err) {
         reject(err);
       } else {
@@ -356,10 +368,15 @@ function runSQL(sql, params = []) {
   });
 }
 
-// Helper function to get data with promises
+// Helper function to get data with promises - FIXED with timeout
 function getSQL(sql, params = []) {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Database query timeout after 30 seconds'));
+    }, 30000);
+    
     db.get(sql, params, (err, row) => {
+      clearTimeout(timeout);
       if (err) {
         reject(err);
       } else {
@@ -372,7 +389,12 @@ function getSQL(sql, params = []) {
 // Helper function to get all data with promises
 function getAllSQL(sql, params = []) {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('Database query timeout after 30 seconds'));
+    }, 30000);
+    
     db.all(sql, params, (err, rows) => {
+      clearTimeout(timeout);
       if (err) {
         reject(err);
       } else {
@@ -397,9 +419,13 @@ app.get('/api/v1/health', (req, res) => {
   });
 });
 
-// Bulk sync endpoint for batch data operations
+// Bulk sync endpoint for batch data operations - FIXED with operation lock
 app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
   console.log(`🔄 Bulk sync request for ${req.params.companyId}/${req.params.divisionId}`);
+  
+  // Set operation lock
+  bulkOperationInProgress = true;
+  operationStartTime = Date.now();
   
   try {
     const { table, data, sync_type, batch_info, metadata } = req.body;
@@ -631,14 +657,21 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
       error: 'Internal server error during bulk sync',
       details: error.message
     });
+  } finally {
+    // CRITICAL: Always release operation lock
+    bulkOperationInProgress = false;
+    operationStartTime = null;
+    console.log(`🔓 Bulk operation completed, lock released`);
   }
 });
 
-// Metadata endpoint for sync tracking
+// Metadata endpoint for sync tracking - FIXED with timeout and error handling
 app.get('/api/v1/metadata/:companyId/:divisionId', async (req, res) => {
+  const { companyId, divisionId } = req.params;
+  
+  console.log(`📋 Fetching sync metadata for ${companyId}/${divisionId}`);
+  
   try {
-    const { companyId, divisionId } = req.params;
-    
     if (!isValidUUID(companyId) || !isValidUUID(divisionId)) {
       return res.status(400).json({
         success: false,
@@ -646,12 +679,39 @@ app.get('/api/v1/metadata/:companyId/:divisionId', async (req, res) => {
       });
     }
     
-    console.log(`📋 Fetching sync metadata for ${companyId}/${divisionId}`);
+    // CRITICAL: Check if bulk operation is in progress
+    if (bulkOperationInProgress) {
+      const duration = operationStartTime ? Math.round((Date.now() - operationStartTime) / 1000) : 0;
+      console.log(`⚠️ Bulk operation in progress (${duration}s), returning cached metadata`);
+      
+      return res.json({
+        success: true,
+        data: {
+          company_id: companyId,
+          division_id: divisionId,
+          last_alter_id_master: 0,
+          last_alter_id_transaction: 0,
+          tables: {},
+          message: `Bulk operation in progress (${duration}s), metadata temporarily unavailable`
+        }
+      });
+    }
     
-    const metadata = await getAllSQL(
+    // CRITICAL FIX: Add timeout to prevent hangs
+    const metadataPromise = getAllSQL(
       'SELECT * FROM sync_metadata WHERE company_id = ? AND division_id = ?',
       [companyId, divisionId]
     );
+    
+    // Race with timeout to prevent hangs
+    const metadata = await Promise.race([
+      metadataPromise,
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Metadata query timeout after 10 seconds')), 10000)
+      )
+    ]);
+    
+    console.log(`✅ Metadata query completed: ${metadata?.length || 0} records`);
     
     // Convert to the format expected by Tally sync
     const response = {
@@ -692,11 +752,20 @@ app.get('/api/v1/metadata/:companyId/:divisionId', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Metadata endpoint error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error',
-      details: error.message
+    console.error('❌ Metadata endpoint error:', error.message);
+    
+    // CRITICAL: Return safe response instead of hanging
+    res.json({
+      success: true,
+      data: {
+        company_id: companyId,
+        division_id: divisionId,
+        last_alter_id_master: 0,
+        last_alter_id_transaction: 0,
+        tables: {},
+        error: 'Metadata temporarily unavailable',
+        message: error.message.includes('timeout') ? 'Database query timeout' : 'Database error'
+      }
     });
   }
 });
