@@ -203,6 +203,7 @@ function initializeDatabase() {
       ledger_guid TEXT,
       amount REAL DEFAULT 0,
       is_party_ledger INTEGER DEFAULT 0,
+      additional_allocation_type TEXT DEFAULT '',
       company_id TEXT NOT NULL,
       division_id TEXT NOT NULL,
       sync_timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
