@@ -48,7 +48,7 @@ db.run('PRAGMA journal_mode = WAL');
 db.run('PRAGMA synchronous = NORMAL');
 
 // CRITICAL: Add busy timeout to prevent hangs
-db.configure("busyTimeout", 30000); // 30 second timeout for concurrent access
+db.run('PRAGMA busy_timeout = 30000'); // 30 second timeout for concurrent access
 
 // Operation lock to prevent concurrent database conflicts
 let bulkOperationInProgress = false;
