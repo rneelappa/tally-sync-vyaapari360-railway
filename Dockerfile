@@ -10,8 +10,8 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci --only=production
+# Install dependencies (use npm install to update lock file)
+RUN npm install --only=production
 
 # Copy application files
 COPY railway-sqlite-server.js ./
