@@ -1,0 +1,8 @@
+Deployment trigger: 2025-09-17 02:45 AM
+Changes:
+- Added Lovable.dev compatible endpoints
+- Enhanced continuous sync with auto-full-migration
+- Fixed database schema issues
+- Added comprehensive error handling
+
+This file triggers Railway deployment.

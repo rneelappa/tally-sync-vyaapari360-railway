@@ -1,53 +1,29 @@
-<<<<<<< HEAD
 {
-    "database": {
-        "server": "localhost",
-        "port": 0,
-        "ssl": false,
-        "schema": "tallydb",
-        "username": "sa",
-        "password": "admin",
-        "loadmethod": "file"
-    },
-    "tally": {
-        "definition": "tally-export-config.yaml",
-        "server": "localhost",
-        "port": 9000,
-        "fromdate": "2024-04-01",
-        "todate": "2025-03-31",
-        "sync": "full",
-        "frequency": 0,
-        "company": ""
-    }
-}
-=======
-{
+  "company": {
+    "id": "629f49fb-983e-4141-8c48-e1423b39e921",
+    "name": "SKM IMPEX-CHENNAI-(24-25)",
+    "division_id": "37f3cc0c-58ad-4baf-b309-360116ffc3cd",
+    "division_name": "MAIN"
+  },
   "railway": {
-    "database": {
-      "type": "sqlite",
-      "api_base": "https://tally-sync-vyaapari360-production.up.railway.app",
-      "endpoints": {
-        "health": "/api/v1/health",
-        "bulk_sync": "/api/v1/bulk-sync",
-        "sync_status": "/api/v1/sync-status",
-        "metadata": "/api/v1/metadata",
-        "query": "/api/v1/query",
-        "tables": "/api/v1/tables"
-      }
+    "api_base": "https://tally-sync-vyaapari360-railway-production.up.railway.app",
+    "endpoints": {
+      "health": "/api/v1/health",
+      "bulk_sync": "/api/v1/bulk-sync",
+      "sync_status": "/api/v1/sync-status",
+      "metadata": "/api/v1/metadata",
+      "query": "/api/v1/query",
+      "tables": "/api/v1/tables",
+      "stats": "/api/v1/stats"
     },
     "timeout": 30000,
     "retry_attempts": 3,
     "batch_size": 500
   },
-  "company": {
-    "name": "SKM",
-    "division_id": "37f3cc0c-58ad-4baf-b309-360116ffc3cd",
-    "division_name": "MAIN"
-  },
   "tally": {
     "server": "localhost",
     "port": 9000,
-    "company": "",
+    "company": "SKM IMPEX-CHENNAI-(24-25)",
     "fromdate": "auto",
     "todate": "auto",
     "sync": "full",
@@ -59,7 +35,8 @@
     "max_concurrent": 3,
     "temp_directory": "./temp",
     "log_level": "info",
-    "auto_create_tables": true
+    "auto_retry": true,
+    "retry_delay": 2000
   },
   "database_mapping": {
     "mst_group": {
@@ -140,24 +117,41 @@
       "required_fields": ["guid", "voucher_guid", "stock_item_name", "quantity"],
       "sync_priority": 12
     },
+    "mst_stock_group": {
+      "table": "stock_items",
+      "primary_key": "guid",
+      "required_fields": ["guid", "name"],
+      "sync_priority": 3
+    },
+    "mst_stock_item": {
+      "table": "stock_items",
+      "primary_key": "guid",
+      "required_fields": ["guid", "name"],
+      "sync_priority": 3
+    },
     "trn_bill": {
       "table": "bills",
       "primary_key": "guid",
       "required_fields": ["guid", "name"],
       "sync_priority": 13
     },
-    "trn_payhead": {
-      "table": "payheads",
+    "trn_bank": {
+      "table": "accounting_entries",
       "primary_key": "guid",
-      "required_fields": ["guid", "name"],
+      "required_fields": ["guid", "voucher_guid"],
       "sync_priority": 14
     },
-    "trn_attendance": {
-      "table": "attendance",
+    "trn_batch": {
+      "table": "inventory_entries",
       "primary_key": "guid",
-      "required_fields": ["guid", "employee_name"],
+      "required_fields": ["guid", "voucher_guid"],
       "sync_priority": 15
+    },
+    "trn_inventory_accounting": {
+      "table": "accounting_entries",
+      "primary_key": "guid",
+      "required_fields": ["guid", "voucher_guid"],
+      "sync_priority": 16
     }
   }
 }
->>>>>>> 58ab74cdfe2a084a8cac455888a5cbb32c6a1519
