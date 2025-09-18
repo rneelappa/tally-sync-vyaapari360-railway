@@ -1,8 +1,8 @@
 # Use Node.js 18 Alpine for smaller image size
 FROM node:18-alpine
 
-# Install SQLite3 and build tools
-RUN apk add --no-cache sqlite3 build-base python3 make g++
+# Install SQLite and build tools (correct package names for Alpine)
+RUN apk add --no-cache sqlite sqlite-dev build-base python3 make g++
 
 # Create app directory
 WORKDIR /app
