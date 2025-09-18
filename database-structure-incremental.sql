@@ -314,9 +314,14 @@ create table trn_accounting
  currency nvarchar(16) not null default ''
 );
 
+-- Added missing columns for migration compatibility
+alter table trn_accounting add column transaction_type nvarchar(64) not null default '';
+alter table trn_accounting add column voucher_guid varchar(64) not null default '';
+
 create table trn_inventory
 (
  guid varchar(64) not null default '',
+ name nvarchar(1024) not null default '',
  item nvarchar(1024) not null default '',
  _item varchar(64) not null default '',
  quantity decimal(15,4) not null default 0,
