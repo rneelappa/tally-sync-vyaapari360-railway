@@ -14,13 +14,27 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 app.use(cors());
 app.use(compression());
-app.use(morgan('combined'));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.raw({ type: 'application/xml', limit: '10mb' }));
+
+// Minimal logging for Railway - prevent 500 logs/sec rate limit
+if (process.env.NODE_ENV === 'production') {
+  // Only log errors and critical operations in production
+  app.use(morgan('tiny', {
+    skip: (req, res) => res.statusCode < 400 && !req.url.includes('/bulk-sync')
+  }));
+} else {
+  app.use(morgan('combined'));
+}
+
+app.use(express.json({ limit: '50mb' }));
+app.use(express.raw({ type: 'application/xml', limit: '50mb' }));
 
 // Database configuration
 const DB_PATH = process.env.DB_PATH || '/data/tally.db';
 console.log(`🗄️ Using database: ${DB_PATH}`);
+
+// Error tracking for bulk operations
+const errorTracker = new Map();
+const MAX_ERRORS_PER_TABLE = 3;
 
 // Initialize SQLite database
 const db = new sqlite3.Database(DB_PATH, (err) => {
@@ -34,7 +48,9 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
 
 // Initialize database schema
 function initializeDatabase() {
-  console.log('🔧 Initializing database schema...');
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('🔧 Initializing database schema...');
+  }
   
   // Create tables with proper schema including notes column
   const createTables = `
@@ -263,7 +279,9 @@ function initializeDatabase() {
     if (err) {
       console.error('❌ Error creating tables:', err.message);
     } else {
-      console.log('✅ Database schema initialized successfully');
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('✅ Database schema initialized successfully');
+      }
       createIndexes();
     }
   });
@@ -271,7 +289,9 @@ function initializeDatabase() {
 
 // Create indexes for better performance
 function createIndexes() {
-  console.log('🔧 Creating database indexes...');
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('🔧 Creating database indexes...');
+  }
   
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_mst_group_company_division ON mst_group(company_id, division_id)',
@@ -293,7 +313,7 @@ function createIndexes() {
         console.error(`❌ Error creating index ${i + 1}:`, err.message);
       }
       completed++;
-      if (completed === indexes.length) {
+      if (completed === indexes.length && process.env.NODE_ENV !== 'production') {
         console.log('✅ Database indexes created successfully');
       }
     });
@@ -381,7 +401,10 @@ app.get('/api/v1/metadata/:companyId/:divisionId', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Metadata error:', error);
+    // Minimal metadata error logging
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('❌ Metadata error:', error);
+    }
     res.status(500).json({
       success: false,
       error: error.message
@@ -402,7 +425,10 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
       });
     }
     
-    console.log(`📊 Processing ${data.length} records for table: ${table}`);
+    // Only log for first batch or errors in production
+    if (process.env.NODE_ENV !== 'production' || data.length > 1000) {
+      console.log(`📊 Processing ${data.length} records for table: ${table}`);
+    }
     
     // Map table names
     const tableMapping = {
@@ -444,10 +470,23 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
         await runSQL(sql, values);
         
         totalProcessed += batch.length;
-        console.log(`✅ Batch ${Math.floor(i/batchSize) + 1}: ${batch.length} records processed`);
+        
+        // Minimal logging in production - only every 10th batch or errors
+        const batchNum = Math.floor(i/batchSize) + 1;
+        if (process.env.NODE_ENV !== 'production' || batchNum % 10 === 0 || batchNum === 1) {
+          console.log(`✅ Batch ${batchNum}: ${batch.length} records processed (Total: ${totalProcessed})`);
+        }
         
       } catch (batchError) {
-        console.error(`❌ Batch processing error:`, batchError);
+        // Track unique errors per table to prevent spam
+        const errorKey = `${targetTable}_${batchError.message.substring(0, 50)}`;
+        const errorCount = errorTracker.get(errorKey) || 0;
+        
+        if (errorCount < MAX_ERRORS_PER_TABLE) {
+          console.error(`❌ ${targetTable} batch error (${errorCount + 1}/${MAX_ERRORS_PER_TABLE}):`, batchError.message);
+          errorTracker.set(errorKey, errorCount + 1);
+        }
+        
         totalErrors += batch.length;
       }
     }
@@ -468,7 +507,8 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
       JSON.stringify(metadata || {})
     ]);
     
-    console.log(`✅ Bulk sync completed: ${totalProcessed} processed, ${totalErrors} errors`);
+    // Always log completion summary
+    console.log(`✅ ${table}: ${totalProcessed} processed, ${totalErrors} errors`);
     
     res.json({
       success: true,
@@ -486,7 +526,15 @@ app.post('/api/v1/bulk-sync/:companyId/:divisionId', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Bulk sync error:', error);
+    // Only log unique bulk sync errors
+    const errorKey = `bulk_sync_${error.message.substring(0, 30)}`;
+    const errorCount = errorTracker.get(errorKey) || 0;
+    
+    if (errorCount < MAX_ERRORS_PER_TABLE) {
+      console.error(`❌ Bulk sync error (${errorCount + 1}/${MAX_ERRORS_PER_TABLE}):`, error.message);
+      errorTracker.set(errorKey, errorCount + 1);
+    }
+    
     res.status(500).json({
       success: false,
       error: 'Internal server error during bulk sync',
@@ -516,7 +564,10 @@ app.post('/api/v1/query', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Query error:', error);
+    // Minimal query error logging
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('❌ Query error:', error);
+    }
     res.status(500).json({
       success: false,
       error: error.message
@@ -545,7 +596,10 @@ app.post('/api/v1/execute-sql', async (req, res) => {
     });
     
   } catch (error) {
-    console.error('❌ Execute SQL error:', error);
+    // Minimal execute SQL error logging
+    if (process.env.NODE_ENV !== 'production') {
+      console.error('❌ Execute SQL error:', error);
+    }
     res.status(500).json({
       success: false,
       error: error.message

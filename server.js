@@ -14,9 +14,19 @@ const PORT = process.env.PORT || 3000;
 app.use(helmet());
 app.use(cors());
 app.use(compression());
-app.use(morgan('combined'));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.raw({ type: 'application/xml', limit: '10mb' }));
+
+// Minimal logging for Railway - prevent 500 logs/sec rate limit
+if (process.env.NODE_ENV === 'production') {
+  // Only log errors and critical operations in production
+  app.use(morgan('tiny', {
+    skip: (req, res) => res.statusCode < 400 && !req.url.includes('/bulk-sync')
+  }));
+} else {
+  app.use(morgan('combined'));
+}
+
+app.use(express.json({ limit: '50mb' }));
+app.use(express.raw({ type: 'application/xml', limit: '50mb' }));
 
 // Database configuration
 const DB_PATH = process.env.DB_PATH || '/data/tally.db';
